@@ -2,7 +2,6 @@ import os
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 import urllib.parse
 import urllib.request
 from io import BytesIO
@@ -29,13 +28,11 @@ if 'start_date' not in st.session_state:
 if 'end_date' not in st.session_state:
     st.session_state['end_date'] = None
 if 't_base' not in st.session_state:
-    st.session_state['t_base'] = 0.0
-if 'use_modified' not in st.session_state:
-    st.session_state['use_modified'] = False
+    st.session_state['t_base'] = 50.0
 if 't_lower' not in st.session_state:
-    st.session_state['t_lower'] = 0.0
+    st.session_state['t_lower'] = 50.0  # Default to 50.0
 if 't_upper' not in st.session_state:
-    st.session_state['t_upper'] = 0.0
+    st.session_state['t_upper'] = 86.0  # Default to 86.0
 if 'harvest_date' not in st.session_state:
     st.session_state['harvest_date'] = None
 if 'starting_moisture' not in st.session_state:
@@ -72,10 +69,9 @@ def reset_inputs():
     st.session_state['state'] = ""
     st.session_state['start_date'] = None
     st.session_state['end_date'] = None
-    st.session_state['t_base'] = 0.0
-    st.session_state['use_modified'] = False
-    st.session_state['t_lower'] = 0.0
-    st.session_state['t_upper'] = 0.0
+    st.session_state['t_base'] = 50.0
+    st.session_state['t_lower'] = 50.0  # Reset to 50.0
+    st.session_state['t_upper'] = 86.0  # Reset to 86.0
     st.session_state['harvest_date'] = None
     st.session_state['starting_moisture'] = 0.80
     st.session_state['swath_density'] = 450.0
@@ -114,7 +110,7 @@ def fetch_weather_data_from_api(api_key, city, state, start_date, end_date,
     return pd.DataFrame()  # Return empty if error
 
 def fetch_drying_weather_data_from_api(api_key, city, state, start_date, end_date,
-                                unit_group="us"):
+                                       unit_group="us"):
     """
     Fetches daily and hourly weather data for drying calculations.
     """
@@ -200,15 +196,14 @@ def calc_double_triangle_gdd(t_min_today, t_max_today, t_min_tomorrow, T_base):
 def calculate_daily_gdd(row, df,
                         method="average",
                         T_base=50.0,
-                        use_modified=False,
                         T_lower=50.0,
                         T_upper=86.0):
     idx = row.name
     t_max = row['tmax']
     t_min = row['tmin']
-    if use_modified:
-        t_max = min(t_max, T_upper)
-        t_min = max(t_min, T_lower)
+    # Always apply T_lower and T_upper
+    t_max = min(t_max, T_upper)
+    t_min = max(t_min, T_lower)
     if method == "average":
         return calc_average_gdd(t_min, t_max, T_base)
     elif method == "sine":
@@ -218,16 +213,14 @@ def calculate_daily_gdd(row, df,
     elif method == "double_sine":
         if idx < len(df) - 1:
             t_min_next = df.loc[idx+1, 'tmin']
-            if use_modified:
-                t_min_next = max(t_min_next, T_lower)
+            t_min_next = max(t_min_next, T_lower)
             return calc_double_sine_gdd(t_min, t_max, t_min_next, T_base)
         else:
             return calc_single_sine_gdd(t_min, t_max, T_base)
     elif method == "double_triangle":
         if idx < len(df) - 1:
             t_min_next = df.loc[idx+1, 'tmin']
-            if use_modified:
-                t_min_next = max(t_min_next, T_lower)
+            t_min_next = max(t_min_next, T_lower)
             return calc_double_triangle_gdd(t_min, t_max, t_min_next, T_base)
         else:
             return calc_single_triangle_gdd(t_min, t_max, T_base)
@@ -239,7 +232,6 @@ def calculate_gdds_for_df(df,
                           end_date,
                           method="average",
                           T_base=50.0,
-                          use_modified=False,
                           T_lower=50.0,
                           T_upper=86.0):
     df = df.copy()
@@ -249,7 +241,6 @@ def calculate_gdds_for_df(df,
         lambda row: calculate_daily_gdd(row, df,
                                         method=method,
                                         T_base=T_base,
-                                        use_modified=use_modified,
                                         T_lower=T_lower,
                                         T_upper=T_upper),
         axis=1
@@ -422,16 +413,9 @@ def main():
             # Base temperature
             t_base = st.number_input("T_base", value=st.session_state['t_base'], step=0.1)
 
-            # Modified GDD option
-            use_modified = st.checkbox("Use Modified?", value=st.session_state['use_modified'])
-
-            # Only show T_lower and T_upper if use_modified is checked
-            if use_modified:
-                t_lower = st.number_input("T_lower", value=st.session_state['t_lower'], step=0.1)
-                t_upper = st.number_input("T_upper", value=st.session_state['t_upper'], step=0.1)
-            else:
-                t_lower = 50.0
-                t_upper = 86.0
+            # T_lower and T_upper inputs
+            t_lower = st.number_input("T_lower", value=st.session_state['t_lower'], step=0.1)
+            t_upper = st.number_input("T_upper", value=st.session_state['t_upper'], step=0.1)
 
             # Save input values to session state
             st.session_state['city'] = city
@@ -439,7 +423,6 @@ def main():
             st.session_state['start_date'] = start_date
             st.session_state['end_date'] = end_date
             st.session_state['t_base'] = t_base
-            st.session_state['use_modified'] = use_modified
             st.session_state['t_lower'] = t_lower
             st.session_state['t_upper'] = t_upper
 
@@ -452,16 +435,13 @@ def main():
 
             # Main inputs from paste-2.txt - now showing all parameters directly (no expander)
             city = st.text_input("City", value=st.session_state['city'])
-            state = st.text_input("State", value=st.session_state['state'] )
+            state = st.text_input("State", value=st.session_state['state'])
             harvest_date = st.date_input("Harvest Date", value=st.session_state['harvest_date'])
-
-
 
             # Save input values to session state
             st.session_state['city'] = city
             st.session_state['state'] = state
             st.session_state['harvest_date'] = harvest_date
-
 
             # Calculate button
             drying_button = st.button("Estimate Drying")
@@ -511,7 +491,6 @@ def main():
                         end_date=end_date,
                         method=method,
                         T_base=t_base,
-                        use_modified=use_modified,
                         T_lower=t_lower,
                         T_upper=t_upper
                     )
@@ -571,7 +550,6 @@ def main():
                     drying_df = predict_moisture_content(
                         df=merged_df,
                         startdate=harvest_date_str,
-
                     )
 
                     # Display results
